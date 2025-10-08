@@ -1,0 +1,56 @@
+name: Fabric CI/CD - Dev to Prod Deployment
+
+on:
+  push:
+    branches:
+      - cd-dev
+  workflow_dispatch:
+
+env:
+  FABRIC_API_URL: "https://api.fabric.microsoft.com/v1"
+  
+jobs:
+  deploy-to-production:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install Dependencies
+        run: |
+          pip install pyyaml requests jsonpath-ng
+      
+      - name: Inject secrets into parameters.yml
+        run: |
+          sed -i 's/__PROD_WORKSPACE_ID__/${{ secrets.PROD_WORKSPACE_ID }}/g' parameters.yml
+          sed -i 's/__PROD_WORKSPACE_NAME__/${{ secrets.PROD_WORKSPACE_NAME }}/g' parameters.yml
+          sed -i 's/__PROD_RAW_LAKEHOUSE_ID__/${{ secrets.PROD_RAW_LAKEHOUSE_ID }}/g' parameters.yml
+      
+      - name: Deploy to Production
+        env:
+          TARGET_ENVIRONMENT: prod
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          python deploy.py
+      
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** Production" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
