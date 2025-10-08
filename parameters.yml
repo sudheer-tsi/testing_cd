@@ -19,5 +19,16 @@ find_replace:
       prod: "26dd097d-f293-420e-b5f2-5c949c38b071"      # Will be replaced by GitHub secret
     item_type: "Notebook"
     file_path:
-      - "01_bronze/**/*.py" # Adjust path to your notebook location
+      find_replace:
+  - find_value: "6e6de13a-f2dc-4623-b3ac-431ec6d345f1"
+    replace_value:
+      dev: "6e6de13a-f2dc-4623-b3ac-431ec6d345f1"
+      prod: "${{ secrets.PROD_RAW_LAKEHOUSE_ID }}"
+    item_type: "Notebook"
+    file_path:
+      - "**/*.py"
+      - "**/*.ipynb"
+      - "**/*.json"
+      - "**/*.Notebook/**"
+# Adjust path to your notebook location
   
