@@ -1,71 +1,51 @@
 """
 Microsoft Fabric Deployment Script
 Handles artifact transformation and deployment from Dev to Production
-Uses fabric_cicd library for deployment
 """
 
 import os
 import yaml
 import json
-import csv
+import requests
 from pathlib import Path
 from jsonpath_ng import parse
-from fabric_cicd import FabricWorkspace, publish_all_items, unpublish_all_orphan_items
+import base64
 
 
 class FabricDeployer:
     def __init__(self, environment):
         self.environment = environment
         self.params = self.load_parameters()
-        self.repo_dir = "."
-        self.item_types = ["Lakehouse", "Notebook", "Environment", "Warehouse", "DataPipeline", "SemanticModel", "Report"]
+        self.access_token = self.get_access_token()
         
     def load_parameters(self):
         """Load configuration from parameters.yml"""
-        params_file = Path('parameters.yml')
-        if params_file.exists():
-            with open(params_file, 'r') as f:
-                return yaml.safe_load(f)
-        return {}
+        with open('parameters.yml', 'r') as f:
+            return yaml.safe_load(f)
     
-    def get_workspace_id_by_env(self, env: str, csv_path: str) -> str:
-        """Get workspace ID from CSV file based on environment"""
-        env = env.strip().lower()
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if row.get("Environment", "").strip().lower() == env:
-                    workspace_id = row.get("Workspace ID", "").strip()
-                    if not workspace_id:
-                        raise ValueError(f"Workspace ID missing for env={env} in {csv_path}")
-                    return workspace_id
-        raise ValueError(f"No row for env={env} in {csv_path}")
-    
-    def get_workspace_info(self):
-        """Get workspace ID and name for current environment"""
-        # Try to get from CSV first
-        csv_file = Path("workspace_data.csv")
-        if csv_file.exists():
-            workspace_id = self.get_workspace_id_by_env(self.environment, csv_file)
-            workspace_name = f"{self.environment.upper()} Workspace"
-        # Fallback to parameters.yml
-        elif self.params and 'environments' in self.params:
-            env_config = self.params['environments'].get(self.environment, {})
-            workspace_id = env_config.get('workspace_id')
-            workspace_name = env_config.get('workspace_name', f"{self.environment.upper()} Workspace")
-            if not workspace_id:
-                raise ValueError(f"Workspace ID not found for environment: {self.environment}")
-        else:
-            raise ValueError("No workspace configuration found. Provide either workspace_data.csv or parameters.yml")
+    def get_access_token(self):
+        """Get Azure AD access token for Fabric API"""
+        tenant_id = os.environ.get('AZURE_TENANT_ID')
+        client_id = os.environ.get('AZURE_CLIENT_ID')
+        client_secret = os.environ.get('AZURE_CLIENT_SECRET')
         
-        return workspace_id, workspace_name
+        if not all([tenant_id, client_id, client_secret]):
+            raise ValueError("Missing required Azure credentials in environment variables")
+        
+        url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        data = {
+            'grant_type': 'client_credentials',
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'scope': 'https://analysis.windows.net/powerbi/api/.default'
+        }
+        
+        response = requests.post(url, data=data)
+        response.raise_for_status()
+        return response.json()['access_token']
     
     def process_find_replace(self):
         """Process simple string replacements in files"""
-        if not self.params.get('find_replace'):
-            print("No find_replace rules found, skipping...")
-            return
-            
         print("Processing find_replace rules...")
         
         for rule in self.params.get('find_replace', []):
@@ -93,10 +73,6 @@ class FabricDeployer:
     
     def process_key_value_replace(self):
         """Process JSON path-based replacements"""
-        if not self.params.get('key_value_replace'):
-            print("No key_value_replace rules found, skipping...")
-            return
-            
         print("\nProcessing key_value_replace rules...")
         
         for rule in self.params.get('key_value_replace', []):
@@ -128,64 +104,115 @@ class FabricDeployer:
                         except Exception as e:
                             print(f"      ✗ Error: {str(e)}")
     
-    def check_reserved_names(self):
-        """Check for reserved names in notebooks and warn user"""
-        print("\nChecking for reserved names...")
-        reserved_keywords = ['final', 'temp', 'system', 'log', 'metadata']
-        found_issues = False
-        
-        for notebook_path in Path('.').glob('**/*.Notebook'):
-            if notebook_path.is_dir():
-                notebook_name = notebook_path.name.replace('.Notebook', '')
-                
-                if any(keyword in notebook_name.lower() for keyword in reserved_keywords):
-                    print(f"  ⚠ WARNING: '{notebook_name}' may contain reserved keywords")
-                    print(f"    Consider renaming to avoid deployment failures")
-                    found_issues = True
-        
-        if not found_issues:
-            print("  ✓ No reserved name issues found")
-        
-        return found_issues
-    
     def deploy_to_fabric(self):
-        """Deploy artifacts to Fabric workspace using fabric_cicd"""
+        """Deploy artifacts to Fabric workspace"""
         print("\n" + "="*60)
         print("Deploying to Fabric workspace...")
         print("="*60)
         
-        workspace_id, workspace_name = self.get_workspace_info()
+        workspace_id = self.params['environments'][self.environment]['workspace_id']
+        workspace_name = self.params['environments'][self.environment]['workspace_name']
         
         print(f"\nTarget Workspace: {workspace_name}")
         print(f"Workspace ID: {workspace_id}")
-        print(f"Environment: {self.environment.upper()}")
-        print(f"Item Types: {', '.join(self.item_types)}")
         
-        try:
-            # Initialize FabricWorkspace
-            print("\nInitializing Fabric workspace connection...")
-            workspace = FabricWorkspace(
-                workspace_id=workspace_id,
-                environment=self.environment,
-                repository_directory=self.repo_dir,
-                item_type_in_scope=self.item_types
-            )
-            
-            # Publish all items
-            print("\nPublishing all items to workspace...")
-            print("This will create new items or update existing ones automatically.")
-            
-            publish_all_items(workspace)
-            
-            print("\n✓ All items published successfully!")
-            
-            # Optional: Uncomment to remove orphaned items
-            # print("\nCleaning up orphaned items...")
-            # unpublish_all_orphan_items(workspace)
-            
-        except Exception as e:
-            print(f"\n✗ Deployment failed: {str(e)}")
-            raise
+        headers = {
+            'Authorization': f'Bearer {self.access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Deploy notebooks
+        self.deploy_notebooks(workspace_id, headers)
+        
+        # Deploy pipelines
+        self.deploy_pipelines(workspace_id, headers)
+        
+        print("\n" + "="*60)
+        print("✓ Deployment completed successfully!")
+        print("="*60)
+    
+    def deploy_notebooks(self, workspace_id, headers):
+        """Deploy notebook artifacts"""
+        print("\nDeploying notebooks...")
+        
+        notebook_count = 0
+        for notebook_path in Path('.').glob('**/*.Notebook'):
+            if notebook_path.is_dir():
+                notebook_name = notebook_path.name.replace('.Notebook', '')
+                content_file = notebook_path / 'notebook-content.py'
+                
+                if content_file.exists():
+                    print(f"\n  Notebook: {notebook_name}")
+                    notebook_count += 1
+                    
+                    try:
+                        with open(content_file, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        
+                        # Create or update notebook via API
+                        url = f"{os.environ['FABRIC_API_URL']}/workspaces/{workspace_id}/notebooks"
+                        payload = {
+                            'displayName': notebook_name,
+                            'definition': {
+                                'format': 'ipynb',
+                                'parts': [
+                                    {
+                                        'path': 'notebook-content.py',
+                                        'payload': base64.b64encode(content.encode()).decode(),
+                                        'payloadType': 'InlineBase64'
+                                    }
+                                ]
+                            }
+                        }
+                        
+                        response = requests.post(url, headers=headers, json=payload)
+                        if response.status_code in [200, 201]:
+                            print(f"    ✓ Deployed successfully")
+                        else:
+                            print(f"    ✗ Failed: {response.status_code}")
+                            print(f"    Response: {response.text}")
+                    except Exception as e:
+                        print(f"    ✗ Error: {str(e)}")
+        
+        if notebook_count == 0:
+            print("  ⊘ No notebooks found")
+    
+    def deploy_pipelines(self, workspace_id, headers):
+        """Deploy pipeline artifacts"""
+        print("\nDeploying pipelines...")
+        
+        pipeline_count = 0
+        for pipeline_path in Path('.').glob('**/*.DataPipeline'):
+            if pipeline_path.is_dir():
+                pipeline_name = pipeline_path.name.replace('.DataPipeline', '')
+                content_file = pipeline_path / 'pipeline-content.json'
+                
+                if content_file.exists():
+                    print(f"\n  Pipeline: {pipeline_name}")
+                    pipeline_count += 1
+                    
+                    try:
+                        with open(content_file, 'r', encoding='utf-8') as f:
+                            content = json.load(f)
+                        
+                        # Create or update pipeline via API
+                        url = f"{os.environ['FABRIC_API_URL']}/workspaces/{workspace_id}/dataPipelines"
+                        payload = {
+                            'displayName': pipeline_name,
+                            'definition': content
+                        }
+                        
+                        response = requests.post(url, headers=headers, json=payload)
+                        if response.status_code in [200, 201]:
+                            print(f"    ✓ Deployed successfully")
+                        else:
+                            print(f"    ✗ Failed: {response.status_code}")
+                            print(f"    Response: {response.text}")
+                    except Exception as e:
+                        print(f"    ✗ Error: {str(e)}")
+        
+        if pipeline_count == 0:
+            print("  ⊘ No pipelines found")
     
     def run(self):
         """Execute full deployment process"""
@@ -193,48 +220,17 @@ class FabricDeployer:
         print(f"FABRIC DEPLOYMENT - {self.environment.upper()} ENVIRONMENT")
         print("="*60 + "\n")
         
-        # Check for reserved names first
-        has_reserved_names = self.check_reserved_names()
-        if has_reserved_names:
-            print("\n⚠ Found items with potentially reserved names.")
-            print("Continuing with deployment, but monitor for failures...\n")
-        
-        # Process transformations
         self.process_find_replace()
         self.process_key_value_replace()
-        
-        # Deploy using fabric_cicd
         self.deploy_to_fabric()
 
 
-def main():
-    """Main entry point"""
-    # Normalize environment name
-    raw_env = os.getenv("ENVIRONMENT", "dev").lower()
-    if raw_env.endswith("dev"):
-        environment = "dev"
-    elif raw_env.endswith("prod"):
-        environment = "prod"
-    else:
-        environment = raw_env
-    
-    # Allow TARGET_ENVIRONMENT as fallback
-    environment = os.environ.get('TARGET_ENVIRONMENT', environment)
+if __name__ == "__main__":
+    environment = os.environ.get('TARGET_ENVIRONMENT', 'prod')
     
     try:
         deployer = FabricDeployer(environment)
         deployer.run()
-        
-        print("\n" + "="*60)
-        print("✓ DEPLOYMENT COMPLETED SUCCESSFULLY!")
-        print("="*60)
-        
     except Exception as e:
         print(f"\n✗ Deployment failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
         exit(1)
-
-
-if __name__ == "__main__":
-    main()
