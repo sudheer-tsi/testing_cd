@@ -1,0 +1,43 @@
+# Fabric Deployment Configuration
+# This file should be committed to your repository
+# Secrets will be injected from GitHub Secrets during deployment
+
+environments:
+  dev:
+    workspace_id: "YOUR_DEV_WORKSPACE_ID"  # Replace with your dev workspace ID
+    workspace_name: "ws-edp-dev"           # Replace with your dev workspace name
+  prod:
+    workspace_id: "__PROD_WORKSPACE_ID__"      # Will be replaced by GitHub secret
+    workspace_name: "__PROD_WORKSPACE_NAME__"  # Will be replaced by GitHub secret
+
+# Simple string replacements (for notebook IDs, lakehouse IDs, etc.)
+find_replace:
+  # Raw Lakehouse replacements
+  - find_value: "YOUR_DEV_RAW_LAKEHOUSE_ID"  # Replace with actual dev lakehouse ID
+    replace_value:
+      dev: "YOUR_DEV_RAW_LAKEHOUSE_ID"       # Same as find_value
+      prod: "__PROD_RAW_LAKEHOUSE_ID__"      # Will be replaced by GitHub secret
+    item_type: "Notebook"
+    file_path:
+      - "01_bronze/edp_dev_raw.Lakehouse/**/*.py"  # Adjust path to your notebook location
+  
+  # Stage Lakehouse replacements  
+  - find_value: "YOUR_DEV_STG_LAKEHOUSE_ID"  # Replace with actual dev stage lakehouse ID
+    replace_value:
+      dev: "YOUR_DEV_STG_LAKEHOUSE_ID"       # Same as find_value
+      prod: "__PROD_STG_LAKEHOUSE_ID__"      # Will be replaced by GitHub secret
+    item_type: "Notebook"
+    file_path:
+      - "nb_consolidated_historic_inventory Copy.Notebook/**/*.py"  # Adjust path
+
+# JSONPath-based replacements (for complex JSON configurations)
+key_value_replace:
+  # Pipeline artifact references
+  - find_key: "$.properties.activities[*].typeProperties.sink.datasetSettings.typeProperties.artifactId"
+    replace_value:
+      dev: "YOUR_DEV_PIPELINE_ARTIFACT_ID"   # Replace with actual dev pipeline artifact ID
+      prod: "__PROD_PIPELINE_ARTIFACT_ID__"  # Will be replaced by GitHub secret
+    item_type: "DataPipeline"
+    item_name: "pl_ingestion"
+    file_path:
+      - "pl_ingestion.DataPipeline/pipeline-content.json"  # Adjust path to your pipeline
