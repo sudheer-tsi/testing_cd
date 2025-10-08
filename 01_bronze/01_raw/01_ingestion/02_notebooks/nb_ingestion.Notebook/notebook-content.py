@@ -5,14 +5,6 @@
 
 # Fabric notebook source
 
-# METADATA ********************
-
-# META {
-# META   "kernel_info": {
-# META     "name": "synapse_pyspark"
-# META   }
-# META }
-
 # CELL ********************
 
 from pyspark.sql import SparkSession
@@ -41,5 +33,3 @@ df.write.format("delta").mode("overwrite").save(delta_path)
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
-
-
