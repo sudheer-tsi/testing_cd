@@ -25,6 +25,8 @@ df_as400_inventory.createOrReplaceTempView("as400_inventory")
 df_cubs_inventory.createOrReplaceTempView("cubs_inventory")
 df_facs_inventory.createOrReplaceTempView("facs_inventory")
 
+var1='6e6de13a-f2dc-4623-b3ac-431ec6d345f1'
+
 # METADATA ********************
 
 # META {
