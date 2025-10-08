@@ -1,35 +1,12 @@
 # Fabric notebook source
 
-
-# CELL ********************
-
-# Fabric notebook source
-
 # METADATA ********************
 
 # META {
 # META   "kernel_info": {
 # META     "name": "synapse_pyspark"
-# META   },
-# META   "dependencies": {
-# META     "lakehouse": {
-# META       "default_lakehouse": "6c97b5de-da3d-4c45-81d7-5250148c70e4",
-# META       "default_lakehouse_name": "edp_dev_raw",
-# META       "default_lakehouse_workspace_id": "26dd097d-f293-420e-b5f2-5c949c38b071",
-# META       "known_lakehouses": [
-# META         {
-# META           "id": "6c97b5de-da3d-4c45-81d7-5250148c70e4"
-# META         }
-# META       ]
-# META     }
 # META   }
 # META }
-
-# MARKDOWN ********************
-
-# 
-# ##### **Author:** JMAN - Nithish
-# ##### **Tittle:** Ingesting the data from extracts into the delta tables
 
 # CELL ********************
 
@@ -48,7 +25,10 @@ if "loaded_at" in df.columns:
 
 # Step 3: Write into Delta
 df.write.format("delta").mode("overwrite").save(delta_path)
-    
+
+
+
+
 
 # METADATA ********************
 
@@ -56,5 +36,3 @@ df.write.format("delta").mode("overwrite").save(delta_path)
 # META   "language": "python",
 # META   "language_group": "synapse_pyspark"
 # META }
-
-
