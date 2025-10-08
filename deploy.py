@@ -1,6 +1,7 @@
 """
 Microsoft Fabric Deployment Script
 Handles artifact transformation and deployment from Dev to Production
+Supports both create and update operations for existing artifacts
 """
 
 import os
@@ -10,11 +11,7 @@ import requests
 from pathlib import Path
 from jsonpath_ng import parse
 import base64
-import os
-import msal
-from fabric_cicd import FabricWorkspace, publish_all_items, unpublish_all_orphan_items
-import csv
-from pathlib import Path
+import time
 
 
 class FabricDeployer:
@@ -22,6 +19,7 @@ class FabricDeployer:
         self.environment = environment
         self.params = self.load_parameters()
         self.access_token = self.get_access_token()
+        self.fabric_api_url = os.environ.get('FABRIC_API_URL', 'https://api.fabric.microsoft.com/v1')
         
     def load_parameters(self):
         """Load configuration from parameters.yml"""
@@ -109,6 +107,57 @@ class FabricDeployer:
                         except Exception as e:
                             print(f"      ✗ Error: {str(e)}")
     
+    def get_existing_items(self, workspace_id, item_type, headers):
+        """
+        Get all existing items of a specific type in the workspace
+        Returns a dictionary mapping display names to item IDs
+        """
+        try:
+            url = f"{self.fabric_api_url}/workspaces/{workspace_id}/items"
+            params = {'type': item_type}
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code == 200:
+                items = response.json().get('value', [])
+                return {item['displayName']: item['id'] for item in items}
+            else:
+                print(f"    ⚠ Warning: Could not fetch existing {item_type}s: {response.status_code}")
+                return {}
+        except Exception as e:
+            print(f"    ⚠ Warning: Error fetching existing {item_type}s: {str(e)}")
+            return {}
+    
+    def wait_for_async_operation(self, operation_url, headers, max_wait_seconds=300):
+        """
+        Poll an async operation until completion
+        Returns True if successful, False otherwise
+        """
+        start_time = time.time()
+        while time.time() - start_time < max_wait_seconds:
+            try:
+                response = requests.get(operation_url, headers=headers)
+                if response.status_code == 200:
+                    result = response.json()
+                    status = result.get('status', '').lower()
+                    
+                    if status == 'succeeded':
+                        return True
+                    elif status in ['failed', 'canceled']:
+                        print(f"      Operation {status}: {result.get('error', 'Unknown error')}")
+                        return False
+                    
+                    # Still running, wait and retry
+                    time.sleep(2)
+                else:
+                    print(f"      ⚠ Could not check operation status: {response.status_code}")
+                    return False
+            except Exception as e:
+                print(f"      ⚠ Error checking operation: {str(e)}")
+                return False
+        
+        print(f"      ⚠ Operation timed out after {max_wait_seconds} seconds")
+        return False
+    
     def deploy_to_fabric(self):
         """Deploy artifacts to Fabric workspace"""
         print("\n" + "="*60)
@@ -133,49 +182,232 @@ class FabricDeployer:
         self.deploy_pipelines(workspace_id, headers)
         
         print("\n" + "="*60)
-        print("✓ Deployment completed successfully!")
+        print("✓ Deployment completed!")
         print("="*60)
     
+    def parse_fabric_notebook(self, py_content):
+        """
+        Parse Fabric notebook format (.py with # METADATA and # CELL markers)
+        and convert to IPython Notebook JSON format
+        """
+        lines = py_content.split('\n')
+        cells = []
+        current_cell_code = []
+        current_cell_metadata = {}
+        in_metadata = False
+        metadata_lines = []
+        notebook_metadata = {
+            "kernelspec": {
+                "display_name": "Synapse PySpark",
+                "name": "synapse_pyspark"
+            },
+            "language_info": {
+                "name": "python"
+            }
+        }
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check for METADATA marker
+            if line.strip() == '# METADATA ********************':
+                # Save previous cell if exists
+                if current_cell_code:
+                    cells.append({
+                        "cell_type": "code",
+                        "source": current_cell_code,
+                        "metadata": current_cell_metadata,
+                        "outputs": [],
+                        "execution_count": None
+                    })
+                    current_cell_code = []
+                    current_cell_metadata = {}
+                
+                # Start reading metadata
+                in_metadata = True
+                metadata_lines = []
+                i += 1
+                continue
+            
+            # Check for CELL marker
+            if line.strip() == '# CELL ********************':
+                # Process collected metadata
+                if metadata_lines:
+                    try:
+                        # Extract JSON from META comments
+                        meta_json = []
+                        for meta_line in metadata_lines:
+                            if meta_line.strip().startswith('# META'):
+                                json_part = meta_line.replace('# META', '').strip()
+                                meta_json.append(json_part)
+                        
+                        if meta_json:
+                            meta_str = ' '.join(meta_json)
+                            current_cell_metadata = json.loads(meta_str)
+                    except:
+                        current_cell_metadata = {}
+                
+                in_metadata = False
+                metadata_lines = []
+                i += 1
+                continue
+            
+            # Collect metadata lines
+            if in_metadata:
+                metadata_lines.append(line)
+            else:
+                # Regular code line
+                if line.strip() != '':
+                    current_cell_code.append(line + '\n')
+            
+            i += 1
+        
+        # Add last cell if exists
+        if current_cell_code:
+            cells.append({
+                "cell_type": "code",
+                "source": current_cell_code,
+                "metadata": current_cell_metadata,
+                "outputs": [],
+                "execution_count": None
+            })
+        
+        # If no cells were created, create a single cell with all content
+        if not cells and py_content.strip():
+            cells.append({
+                "cell_type": "code",
+                "source": [py_content],
+                "metadata": {"language": "python"},
+                "outputs": [],
+                "execution_count": None
+            })
+        
+        # Create IPython notebook structure
+        notebook = {
+            "cells": cells,
+            "metadata": notebook_metadata,
+            "nbformat": 4,
+            "nbformat_minor": 2
+        }
+        
+        return notebook
+    
     def deploy_notebooks(self, workspace_id, headers):
-        """Deploy notebook artifacts"""
+        """Deploy notebook artifacts with create or update logic"""
         print("\nDeploying notebooks...")
+        
+        # Get existing notebooks
+        print("  Checking for existing notebooks...")
+        existing_notebooks = self.get_existing_items(workspace_id, 'Notebook', headers)
         
         notebook_count = 0
         for notebook_path in Path('.').glob('**/*.Notebook'):
             if notebook_path.is_dir():
                 notebook_name = notebook_path.name.replace('.Notebook', '')
-                content_file = notebook_path / 'notebook-content.py'
                 
-                if content_file.exists():
+                # Look for either .py or .ipynb content files
+                content_file_py = notebook_path / 'notebook-content.py'
+                content_file_ipynb = notebook_path / 'notebook-content.ipynb'
+                
+                content_file = None
+                if content_file_ipynb.exists():
+                    content_file = content_file_ipynb
+                elif content_file_py.exists():
+                    content_file = content_file_py
+                
+                if content_file and content_file.exists():
                     print(f"\n  Notebook: {notebook_name}")
                     notebook_count += 1
                     
                     try:
-                        with open(content_file, 'r', encoding='utf-8') as f:
-                            content = f.read()
+                        # Read and prepare content based on file type
+                        if content_file.suffix == '.ipynb':
+                            # Already in notebook format
+                            with open(content_file, 'r', encoding='utf-8') as f:
+                                notebook_content = json.load(f)
+                            content_json = json.dumps(notebook_content)
+                        else:
+                            # Convert .py to .ipynb format
+                            with open(content_file, 'r', encoding='utf-8') as f:
+                                py_content = f.read()
+                            notebook_content = self.convert_py_to_ipynb(py_content)
+                            content_json = json.dumps(notebook_content)
                         
-                        # Create or update notebook via API
-                        url = f"{os.environ['FABRIC_API_URL']}/workspaces/{workspace_id}/notebooks"
-                        payload = {
-                            'displayName': notebook_name,
-                            'definition': {
-                                'format': 'ipynb',
-                                'parts': [
-                                    {
-                                        'path': 'notebook-content.py',
-                                        'payload': base64.b64encode(content.encode()).decode(),
-                                        'payloadType': 'InlineBase64'
-                                    }
-                                ]
-                            }
+                        # Prepare the definition
+                        definition = {
+                            'format': 'ipynb',
+                            'parts': [
+                                {
+                                    'path': 'notebook-content.ipynb',
+                                    'payload': base64.b64encode(content_json.encode()).decode(),
+                                    'payloadType': 'InlineBase64'
+                                }
+                            ]
                         }
                         
-                        response = requests.post(url, headers=headers, json=payload)
-                        if response.status_code in [200, 201]:
-                            print(f"    ✓ Deployed successfully")
+                        # Check for reserved names and warn user
+                        reserved_keywords = ['final', 'temp', 'system', 'log', 'metadata']
+                        if any(keyword in notebook_name.lower() for keyword in reserved_keywords):
+                            print(f"    ⚠ Warning: '{notebook_name}' may contain reserved keywords")
+                            print(f"    If deployment fails, consider renaming the notebook")
+                        
+                        # Check if notebook exists
+                        if notebook_name in existing_notebooks:
+                            # UPDATE existing notebook
+                            notebook_id = existing_notebooks[notebook_name]
+                            print(f"    → Updating existing notebook (ID: {notebook_id})")
+                            
+                            url = f"{self.fabric_api_url}/workspaces/{workspace_id}/notebooks/{notebook_id}/updateDefinition"
+                            payload = {'definition': definition}
+                            
+                            response = requests.post(url, headers=headers, json=payload)
+                            
+                            if response.status_code == 202:
+                                # Async operation - poll for completion
+                                location = response.headers.get('Location')
+                                if location:
+                                    print(f"    ⏳ Waiting for update to complete...")
+                                    if self.wait_for_async_operation(location, headers):
+                                        print(f"    ✓ Updated successfully")
+                                    else:
+                                        print(f"    ✗ Update operation failed")
+                                else:
+                                    print(f"    ✓ Update accepted (async)")
+                            elif response.status_code in [200, 201]:
+                                print(f"    ✓ Updated successfully")
+                            else:
+                                print(f"    ✗ Update failed: {response.status_code}")
+                                print(f"    Response: {response.text}")
                         else:
-                            print(f"    ✗ Failed: {response.status_code}")
-                            print(f"    Response: {response.text}")
+                            # CREATE new notebook
+                            print(f"    → Creating new notebook")
+                            
+                            url = f"{self.fabric_api_url}/workspaces/{workspace_id}/notebooks"
+                            payload = {
+                                'displayName': notebook_name,
+                                'definition': definition
+                            }
+                            
+                            response = requests.post(url, headers=headers, json=payload)
+                            
+                            if response.status_code == 202:
+                                # Async operation - poll for completion
+                                location = response.headers.get('Location')
+                                if location:
+                                    print(f"    ⏳ Waiting for creation to complete...")
+                                    if self.wait_for_async_operation(location, headers):
+                                        print(f"    ✓ Created successfully")
+                                    else:
+                                        print(f"    ✗ Creation operation failed")
+                                else:
+                                    print(f"    ✓ Creation accepted (async)")
+                            elif response.status_code in [200, 201]:
+                                print(f"    ✓ Created successfully")
+                            else:
+                                print(f"    ✗ Creation failed: {response.status_code}")
+                                print(f"    Response: {response.text}")
+                                
                     except Exception as e:
                         print(f"    ✗ Error: {str(e)}")
         
@@ -183,8 +415,12 @@ class FabricDeployer:
             print("  ⊘ No notebooks found")
     
     def deploy_pipelines(self, workspace_id, headers):
-        """Deploy pipeline artifacts"""
+        """Deploy pipeline artifacts with create or update logic"""
         print("\nDeploying pipelines...")
+        
+        # Get existing pipelines
+        print("  Checking for existing pipelines...")
+        existing_pipelines = self.get_existing_items(workspace_id, 'DataPipeline', headers)
         
         pipeline_count = 0
         for pipeline_path in Path('.').glob('**/*.DataPipeline'):
@@ -200,19 +436,79 @@ class FabricDeployer:
                         with open(content_file, 'r', encoding='utf-8') as f:
                             content = json.load(f)
                         
-                        # Create or update pipeline via API
-                        url = f"{os.environ['FABRIC_API_URL']}/workspaces/{workspace_id}/dataPipelines"
-                        payload = {
-                            'displayName': pipeline_name,
-                            'definition': content
-                        }
+                        # Validate that definition has required structure
+                        if not content:
+                            print(f"    ✗ Error: Empty pipeline definition")
+                            continue
                         
-                        response = requests.post(url, headers=headers, json=payload)
-                        if response.status_code in [200, 201]:
-                            print(f"    ✓ Deployed successfully")
+                        # Ensure parts array exists and is not empty
+                        definition = content if isinstance(content, dict) else {'parts': []}
+                        if 'parts' not in definition or not definition['parts']:
+                            print(f"    ⚠ Warning: Pipeline definition missing 'parts' - adding default structure")
+                            definition = {
+                                'parts': [
+                                    {
+                                        'path': 'pipeline-content.json',
+                                        'payload': base64.b64encode(json.dumps(content).encode()).decode(),
+                                        'payloadType': 'InlineBase64'
+                                    }
+                                ]
+                            }
+                        
+                        # Check if pipeline exists
+                        if pipeline_name in existing_pipelines:
+                            # UPDATE existing pipeline
+                            pipeline_id = existing_pipelines[pipeline_name]
+                            print(f"    → Updating existing pipeline (ID: {pipeline_id})")
+                            
+                            url = f"{self.fabric_api_url}/workspaces/{workspace_id}/dataPipelines/{pipeline_id}/updateDefinition"
+                            payload = {'definition': definition}
+                            
+                            response = requests.post(url, headers=headers, json=payload)
+                            
+                            if response.status_code == 202:
+                                location = response.headers.get('Location')
+                                if location:
+                                    print(f"    ⏳ Waiting for update to complete...")
+                                    if self.wait_for_async_operation(location, headers):
+                                        print(f"    ✓ Updated successfully")
+                                    else:
+                                        print(f"    ✗ Update operation failed")
+                                else:
+                                    print(f"    ✓ Update accepted (async)")
+                            elif response.status_code in [200, 201]:
+                                print(f"    ✓ Updated successfully")
+                            else:
+                                print(f"    ✗ Update failed: {response.status_code}")
+                                print(f"    Response: {response.text}")
                         else:
-                            print(f"    ✗ Failed: {response.status_code}")
-                            print(f"    Response: {response.text}")
+                            # CREATE new pipeline
+                            print(f"    → Creating new pipeline")
+                            
+                            url = f"{self.fabric_api_url}/workspaces/{workspace_id}/dataPipelines"
+                            payload = {
+                                'displayName': pipeline_name,
+                                'definition': definition
+                            }
+                            
+                            response = requests.post(url, headers=headers, json=payload)
+                            
+                            if response.status_code == 202:
+                                location = response.headers.get('Location')
+                                if location:
+                                    print(f"    ⏳ Waiting for creation to complete...")
+                                    if self.wait_for_async_operation(location, headers):
+                                        print(f"    ✓ Created successfully")
+                                    else:
+                                        print(f"    ✗ Creation operation failed")
+                                else:
+                                    print(f"    ✓ Creation accepted (async)")
+                            elif response.status_code in [200, 201]:
+                                print(f"    ✓ Created successfully")
+                            else:
+                                print(f"    ✗ Creation failed: {response.status_code}")
+                                print(f"    Response: {response.text}")
+                                
                     except Exception as e:
                         print(f"    ✗ Error: {str(e)}")
         
