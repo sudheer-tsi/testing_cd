@@ -4,7 +4,7 @@ name: Fabric CI/CD - Dev to Prod Deployment
 on:
   push:
     branches:
-      - cd-dev
+      - cd-prod
   workflow_dispatch:  # Allows manual trigger from GitHub UI
 
 # Environment variables - shared across all jobs
