@@ -5,10 +5,10 @@
 environments:
   dev:
     workspace_id: "6e6de13a-f2dc-4623-b3ac-431ec6d345f1"  # Replace with your dev workspace ID
-    workspace_name: "ws-edp-dev"           # Replace with your dev workspace name
+    workspace_name: "edp-dev"           # Replace with your dev workspace name
   prod:
-    workspace_id: "__PROD_WORKSPACE_ID__"      # Will be replaced by GitHub secret
-    workspace_name: "__PROD_WORKSPACE_NAME__"  # Will be replaced by GitHub secret
+    workspace_id: "26dd097d-f293-420e-b5f2-5c949c38b071"      # Will be replaced by GitHub secret
+    workspace_name: "ws-edp-dev"  # Will be replaced by GitHub secret
 
 # Simple string replacements (for notebook IDs, lakehouse IDs, etc.)
 find_replace:
@@ -16,7 +16,7 @@ find_replace:
   - find_value: "6e6de13a-f2dc-4623-b3ac-431ec6d345f1"  # Replace with actual dev lakehouse ID
     replace_value:
       dev: "6e6de13a-f2dc-4623-b3ac-431ec6d345f1"       # Same as find_value
-      prod: "__PROD_WORKSPACE_ID__"      # Will be replaced by GitHub secret
+      prod: "26dd097d-f293-420e-b5f2-5c949c38b071"      # Will be replaced by GitHub secret
     item_type: "Notebook"
     file_path:
       - "01_bronze/**/*.py" # Adjust path to your notebook location
