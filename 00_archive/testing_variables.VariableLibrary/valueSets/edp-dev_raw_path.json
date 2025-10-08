@@ -1,0 +1,10 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/valueSet/1.0.0/schema.json",
+  "name": "edp-dev_raw_path",
+  "variableOverrides": [
+    {
+      "name": "dev_raw_path",
+      "value": "abfss://ws-edp-dev@onelake.dfs.fabric.microsoft.com/edp_dev_raw.lakehouse/Tables/"
+    }
+  ]
+}

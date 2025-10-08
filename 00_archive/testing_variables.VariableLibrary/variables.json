@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/variables/1.0.0/schema.json",
+  "variables": [
+    {
+      "name": "dev_raw_path",
+      "note": "",
+      "type": "String",
+      "value": "abfss://ws-tsi-data-platform-dev-001@onelake.dfs.fabric.microsoft.com/lh_raw.lakehouse/Tables/"
+    }
+  ]
+}
