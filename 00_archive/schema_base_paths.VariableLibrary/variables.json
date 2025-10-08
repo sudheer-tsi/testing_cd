@@ -1,0 +1,17 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/variables/1.0.0/schema.json",
+  "variables": [
+    {
+      "name": "raw_path_dev",
+      "note": "base path for raw ",
+      "type": "String",
+      "value": "abfss://ws-edp-dev@onelake.dfs.fabric.microsoft.com/edp_dev_raw.lakehouse/Tables/"
+    },
+    {
+      "name": "sample_table_name",
+      "note": "",
+      "type": "String",
+      "value": "edp_dev_raw.dbo.testing_250916"
+    }
+  ]
+}

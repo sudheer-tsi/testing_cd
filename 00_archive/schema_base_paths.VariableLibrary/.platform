@@ -1,12 +1,11 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
   "metadata": {
-    "type": "Notebook",
-    "displayName": "final_cd_data",
-    "description": "New notebook"
+    "type": "VariableLibrary",
+    "displayName": "schema_base_paths"
   },
   "config": {
     "version": "2.0",
-    "logicalId": "b1c38536-d78f-a04d-4c81-cf6a9e58f229"
+    "logicalId": "6d230547-6afc-9c6d-4bb2-3e291527652d"
   }
 }
