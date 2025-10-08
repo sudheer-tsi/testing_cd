@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - cd-dev
+      - cd-prod
   workflow_dispatch:
 
 env:
