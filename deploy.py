@@ -185,6 +185,58 @@ class FabricDeployer:
         print("✓ Deployment completed!")
         print("="*60)
     
+    def convert_py_to_ipynb(self, py_content):
+        """Convert Python script to IPython Notebook JSON format"""
+        # Split content into cells (basic conversion)
+        lines = py_content.split('\n')
+        cells = []
+        current_cell = []
+        
+        for line in lines:
+            if line.strip().startswith('# COMMAND ----------'):
+                # Save previous cell if exists
+                if current_cell:
+                    cells.append({
+                        "cell_type": "code",
+                        "source": current_cell,
+                        "metadata": {},
+                        "outputs": [],
+                        "execution_count": None
+                    })
+                    current_cell = []
+            else:
+                current_cell.append(line + '\n')
+        
+        # Add last cell
+        if current_cell:
+            cells.append({
+                "cell_type": "code",
+                "source": current_cell,
+                "metadata": {},
+                "outputs": [],
+                "execution_count": None
+            })
+        
+        # Create IPython notebook structure
+        notebook = {
+            "cells": cells,
+            "metadata": {
+                "kernelspec": {
+                    "display_name": "Python 3",
+                    "language": "python",
+                    "name": "python3"
+                },
+                "language_info": {
+                    "name": "python",
+                    "version": "3.10.0"
+                }
+            },
+            "nbformat": 4,
+            "nbformat_minor": 2
+        }
+        
+        return notebook
+    
     def deploy_notebooks(self, workspace_id, headers):
         """Deploy notebook artifacts with create or update logic"""
         print("\nDeploying notebooks...")
@@ -197,27 +249,52 @@ class FabricDeployer:
         for notebook_path in Path('.').glob('**/*.Notebook'):
             if notebook_path.is_dir():
                 notebook_name = notebook_path.name.replace('.Notebook', '')
-                content_file = notebook_path / 'notebook-content.py'
                 
-                if content_file.exists():
+                # Look for either .py or .ipynb content files
+                content_file_py = notebook_path / 'notebook-content.py'
+                content_file_ipynb = notebook_path / 'notebook-content.ipynb'
+                
+                content_file = None
+                if content_file_ipynb.exists():
+                    content_file = content_file_ipynb
+                elif content_file_py.exists():
+                    content_file = content_file_py
+                
+                if content_file and content_file.exists():
                     print(f"\n  Notebook: {notebook_name}")
                     notebook_count += 1
                     
                     try:
-                        with open(content_file, 'r', encoding='utf-8') as f:
-                            content = f.read()
+                        # Read and prepare content based on file type
+                        if content_file.suffix == '.ipynb':
+                            # Already in notebook format
+                            with open(content_file, 'r', encoding='utf-8') as f:
+                                notebook_content = json.load(f)
+                            content_json = json.dumps(notebook_content)
+                        else:
+                            # Convert .py to .ipynb format
+                            with open(content_file, 'r', encoding='utf-8') as f:
+                                py_content = f.read()
+                            notebook_content = self.convert_py_to_ipynb(py_content)
+                            content_json = json.dumps(notebook_content)
                         
                         # Prepare the definition
                         definition = {
                             'format': 'ipynb',
                             'parts': [
                                 {
-                                    'path': 'notebook-content.py',
-                                    'payload': base64.b64encode(content.encode()).decode(),
+                                    'path': 'notebook-content.ipynb',
+                                    'payload': base64.b64encode(content_json.encode()).decode(),
                                     'payloadType': 'InlineBase64'
                                 }
                             ]
                         }
+                        
+                        # Check for reserved names and warn user
+                        reserved_keywords = ['final', 'temp', 'system', 'log', 'metadata']
+                        if any(keyword in notebook_name.lower() for keyword in reserved_keywords):
+                            print(f"    ⚠ Warning: '{notebook_name}' may contain reserved keywords")
+                            print(f"    If deployment fails, consider renaming the notebook")
                         
                         # Check if notebook exists
                         if notebook_name in existing_notebooks:
