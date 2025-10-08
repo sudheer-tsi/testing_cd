@@ -27,8 +27,5 @@ find_replace:
     item_type: "Notebook"
     file_path:
       - "**/*.py"
-      - "**/*.ipynb"
-      - "**/*.json"
-      - "**/*.Notebook/**"
 # Adjust path to your notebook location
   
