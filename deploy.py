@@ -10,6 +10,11 @@ import requests
 from pathlib import Path
 from jsonpath_ng import parse
 import base64
+import os
+import msal
+from fabric_cicd import FabricWorkspace, publish_all_items, unpublish_all_orphan_items
+import csv
+from pathlib import Path
 
 
 class FabricDeployer:
