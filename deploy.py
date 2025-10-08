@@ -185,34 +185,100 @@ class FabricDeployer:
         print("✓ Deployment completed!")
         print("="*60)
     
-    def convert_py_to_ipynb(self, py_content):
-        """Convert Python script to IPython Notebook JSON format"""
-        # Split content into cells (basic conversion)
+    def parse_fabric_notebook(self, py_content):
+        """
+        Parse Fabric notebook format (.py with # METADATA and # CELL markers)
+        and convert to IPython Notebook JSON format
+        """
         lines = py_content.split('\n')
         cells = []
-        current_cell = []
+        current_cell_code = []
+        current_cell_metadata = {}
+        in_metadata = False
+        metadata_lines = []
+        notebook_metadata = {
+            "kernelspec": {
+                "display_name": "Synapse PySpark",
+                "name": "synapse_pyspark"
+            },
+            "language_info": {
+                "name": "python"
+            }
+        }
         
-        for line in lines:
-            if line.strip().startswith('# COMMAND ----------'):
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check for METADATA marker
+            if line.strip() == '# METADATA ********************':
                 # Save previous cell if exists
-                if current_cell:
+                if current_cell_code:
                     cells.append({
                         "cell_type": "code",
-                        "source": current_cell,
-                        "metadata": {},
+                        "source": current_cell_code,
+                        "metadata": current_cell_metadata,
                         "outputs": [],
                         "execution_count": None
                     })
-                    current_cell = []
+                    current_cell_code = []
+                    current_cell_metadata = {}
+                
+                # Start reading metadata
+                in_metadata = True
+                metadata_lines = []
+                i += 1
+                continue
+            
+            # Check for CELL marker
+            if line.strip() == '# CELL ********************':
+                # Process collected metadata
+                if metadata_lines:
+                    try:
+                        # Extract JSON from META comments
+                        meta_json = []
+                        for meta_line in metadata_lines:
+                            if meta_line.strip().startswith('# META'):
+                                json_part = meta_line.replace('# META', '').strip()
+                                meta_json.append(json_part)
+                        
+                        if meta_json:
+                            meta_str = ' '.join(meta_json)
+                            current_cell_metadata = json.loads(meta_str)
+                    except:
+                        current_cell_metadata = {}
+                
+                in_metadata = False
+                metadata_lines = []
+                i += 1
+                continue
+            
+            # Collect metadata lines
+            if in_metadata:
+                metadata_lines.append(line)
             else:
-                current_cell.append(line + '\n')
+                # Regular code line
+                if line.strip() != '':
+                    current_cell_code.append(line + '\n')
+            
+            i += 1
         
-        # Add last cell
-        if current_cell:
+        # Add last cell if exists
+        if current_cell_code:
             cells.append({
                 "cell_type": "code",
-                "source": current_cell,
-                "metadata": {},
+                "source": current_cell_code,
+                "metadata": current_cell_metadata,
+                "outputs": [],
+                "execution_count": None
+            })
+        
+        # If no cells were created, create a single cell with all content
+        if not cells and py_content.strip():
+            cells.append({
+                "cell_type": "code",
+                "source": [py_content],
+                "metadata": {"language": "python"},
                 "outputs": [],
                 "execution_count": None
             })
@@ -220,17 +286,7 @@ class FabricDeployer:
         # Create IPython notebook structure
         notebook = {
             "cells": cells,
-            "metadata": {
-                "kernelspec": {
-                    "display_name": "Python 3",
-                    "language": "python",
-                    "name": "python3"
-                },
-                "language_info": {
-                    "name": "python",
-                    "version": "3.10.0"
-                }
-            },
+            "metadata": notebook_metadata,
             "nbformat": 4,
             "nbformat_minor": 2
         }
@@ -275,7 +331,7 @@ class FabricDeployer:
                             # Convert .py to .ipynb format
                             with open(content_file, 'r', encoding='utf-8') as f:
                                 py_content = f.read()
-                            notebook_content = self.convert_py_to_ipynb(py_content)
+                            notebook_content = self.parse_fabric_notebook(py_content)
                             content_json = json.dumps(notebook_content)
                         
                         # Prepare the definition
